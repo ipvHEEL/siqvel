@@ -4,6 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Siqvel Platform</title>
+    <link rel="icon" href="data:," />
     <style>
       :root {
         --bg: #0a0f1f;
@@ -11,6 +12,7 @@
         --txt: #e9eef7;
         --accent: #7c5cff;
         --ok: #23d18b;
+        --danger: #ff7676;
       }
       * { box-sizing: border-box; }
       body {
@@ -18,16 +20,16 @@
         font-family: Inter, system-ui, sans-serif;
         color: var(--txt);
         background: radial-gradient(circle at top right, #2f1f88, transparent 40%),
-          radial-gradient(circle at bottom left, #0a5579, transparent 35%),
-          var(--bg);
+          radial-gradient(circle at bottom left, #0a5579, transparent 35%), var(--bg);
         min-height: 100vh;
       }
-      .wrap { max-width: 1200px; margin: 0 auto; padding: 24px; }
+      .wrap { max-width: 1300px; margin: 0 auto; padding: 24px; }
       h1 { font-size: 36px; margin-bottom: 8px; }
       .subtitle { opacity: .8; margin-bottom: 24px; }
+      .actions { display: flex; justify-content: flex-end; margin-bottom: 12px; }
       .grid {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
         gap: 16px;
       }
       .card {
@@ -37,7 +39,7 @@
         backdrop-filter: blur(8px);
         padding: 16px;
       }
-      input, select, button {
+      input, select, button, textarea {
         width: 100%;
         margin-bottom: 10px;
         border: 1px solid rgba(255,255,255,.18);
@@ -46,12 +48,14 @@
         color: var(--txt);
         padding: 10px;
       }
+      textarea { min-height: 70px; resize: vertical; }
       button {
         background: linear-gradient(90deg, var(--accent), #38b6ff);
         border: none;
         font-weight: 700;
         cursor: pointer;
       }
+      button.secondary { background: rgba(255, 255, 255, .15); }
       ul { list-style: none; padding: 0; margin: 0; }
       li {
         border: 1px solid rgba(255,255,255,.1);
@@ -59,16 +63,19 @@
         padding: 10px;
         margin-bottom: 8px;
       }
-      .meta { font-size: 12px; opacity: .75; }
       .row { display:flex; gap:8px; }
-      .ghost { background: transparent; border:1px solid rgba(255,255,255,.3); }
       .ok { color: var(--ok); font-size: 12px; min-height: 18px; }
+      .error { color: var(--danger); }
+      .line { opacity: .85; }
     </style>
   </head>
   <body>
     <div class="wrap">
       <h1>🚀 Siqvel Platform</h1>
-      <div class="subtitle">Полный CRUD по Users / Projects / Tasks с поддержкой SQLite, PostgreSQL, MySQL</div>
+      <div class="subtitle">Удобный CRUD-интерфейс: просмотр, добавление, изменение и удаление Users / Projects / Tasks.</div>
+      <div class="actions">
+        <button class="secondary" onclick="refreshAll()">Обновить все списки</button>
+      </div>
       <div class="grid">
         <section class="card">
           <h3>Users</h3>
@@ -82,7 +89,7 @@
         <section class="card">
           <h3>Projects</h3>
           <input id="p-title" placeholder="Название проекта" />
-          <input id="p-desc" placeholder="Описание" />
+          <textarea id="p-desc" placeholder="Описание"></textarea>
           <input id="p-owner" type="number" placeholder="ID владельца" />
           <button onclick="createProject()">Создать проект</button>
           <div id="p-msg" class="ok"></div>
@@ -113,100 +120,198 @@
           headers: { 'Content-Type': 'application/json' },
           ...options,
         });
+
         if (!res.ok) {
           const err = await res.json().catch(() => ({}));
-          throw new Error(err.detail || 'Ошибка запроса');
+          if (Array.isArray(err.detail)) {
+            throw new Error(err.detail.map(item => item.msg).join('; '));
+          }
+          throw new Error(err.detail || `Ошибка ${res.status}`);
         }
+
         if (res.status === 204) return null;
         return res.json();
       }
 
-      function row(item, fields, delFn) {
+      function message(id, text, isError = false) {
+        const el = document.getElementById(id);
+        el.textContent = text;
+        el.classList.toggle('error', isError);
+      }
+
+      function editFields(type, item) {
+        if (type === 'user') {
+          return `
+            <input id="edit-user-name-${item.id}" value="${item.name}" />
+            <input id="edit-user-email-${item.id}" value="${item.email}" />
+          `;
+        }
+        if (type === 'project') {
+          return `
+            <input id="edit-project-title-${item.id}" value="${item.title}" />
+            <textarea id="edit-project-description-${item.id}">${item.description || ''}</textarea>
+            <input id="edit-project-owner_id-${item.id}" type="number" value="${item.owner_id}" />
+          `;
+        }
+        return `
+          <input id="edit-task-title-${item.id}" value="${item.title}" />
+          <select id="edit-task-status-${item.id}">
+            <option value="todo" ${item.status === 'todo' ? 'selected' : ''}>todo</option>
+            <option value="in_progress" ${item.status === 'in_progress' ? 'selected' : ''}>in_progress</option>
+            <option value="done" ${item.status === 'done' ? 'selected' : ''}>done</option>
+          </select>
+          <input id="edit-task-project_id-${item.id}" type="number" value="${item.project_id}" />
+        `;
+      }
+
+      function renderItem(type, item, detailsHtml) {
         const li = document.createElement('li');
+        li.id = `${type}-${item.id}`;
         li.innerHTML = `
-          <strong>#${item.id}</strong> ${fields.map(f => item[f]).join(' · ')}
+          <div class="line"><strong>#${item.id}</strong> ${detailsHtml}</div>
           <div class="row">
-            <button class="ghost" onclick="${delFn}(${item.id})">Удалить</button>
+            <button class="secondary" onclick="toggleEdit('${type}', ${item.id})">Изменить</button>
+            <button onclick="deleteItem('${type}', ${item.id})">Удалить</button>
+          </div>
+          <div id="edit-${type}-${item.id}" style="display:none">
+            ${editFields(type, item)}
+            <div class="row">
+              <button onclick="saveEdit('${type}', ${item.id})">Сохранить</button>
+              <button class="secondary" onclick="toggleEdit('${type}', ${item.id})">Отмена</button>
+            </div>
           </div>
         `;
         return li;
+      }
+
+      function toggleEdit(type, id) {
+        const block = document.getElementById(`edit-${type}-${id}`);
+        block.style.display = block.style.display === 'none' ? 'block' : 'none';
+      }
+
+      async function saveEdit(type, id) {
+        const map = {
+          user: {
+            path: `/users/${id}`,
+            body: {
+              name: document.getElementById(`edit-user-name-${id}`).value.trim(),
+              email: document.getElementById(`edit-user-email-${id}`).value.trim(),
+            },
+          },
+          project: {
+            path: `/projects/${id}`,
+            body: {
+              title: document.getElementById(`edit-project-title-${id}`).value.trim(),
+              description: document.getElementById(`edit-project-description-${id}`).value.trim(),
+              owner_id: Number(document.getElementById(`edit-project-owner_id-${id}`).value),
+            },
+          },
+          task: {
+            path: `/tasks/${id}`,
+            body: {
+              title: document.getElementById(`edit-task-title-${id}`).value.trim(),
+              status: document.getElementById(`edit-task-status-${id}`).value,
+              project_id: Number(document.getElementById(`edit-task-project_id-${id}`).value),
+            },
+          },
+        };
+
+        try {
+          await request(map[type].path, { method: 'PUT', body: JSON.stringify(map[type].body) });
+          message(`${type[0]}-msg`, 'Изменения сохранены');
+          await refreshAll();
+        } catch (e) {
+          message(`${type[0]}-msg`, e.message, true);
+        }
+      }
+
+      async function deleteItem(type, id) {
+        const paths = { user: '/users', project: '/projects', task: '/tasks' };
+        try {
+          await request(`${paths[type]}/${id}`, { method: 'DELETE' });
+          message(`${type[0]}-msg`, 'Удалено');
+          await refreshAll();
+        } catch (e) {
+          message(`${type[0]}-msg`, e.message, true);
+        }
       }
 
       async function refreshUsers() {
         const list = document.getElementById('u-list');
         list.innerHTML = '';
         const data = await request('/users');
-        data.forEach(u => list.appendChild(row(u, ['name', 'email'], 'deleteUser')));
+        data.forEach((u) => list.appendChild(renderItem('user', u, `${u.name} · ${u.email}`)));
       }
+
       async function createUser() {
         try {
           await request('/users', {
             method: 'POST',
             body: JSON.stringify({
-              name: document.getElementById('u-name').value,
-              email: document.getElementById('u-email').value,
+              name: document.getElementById('u-name').value.trim(),
+              email: document.getElementById('u-email').value.trim(),
             }),
           });
-          document.getElementById('u-msg').textContent = 'Пользователь создан';
-          refreshUsers();
-        } catch (e) { document.getElementById('u-msg').textContent = e.message; }
-      }
-      async function deleteUser(id) {
-        await request(`/users/${id}`, { method: 'DELETE' });
-        refreshUsers();
+          message('u-msg', 'Пользователь создан');
+          await refreshUsers();
+        } catch (e) {
+          message('u-msg', e.message, true);
+        }
       }
 
       async function refreshProjects() {
         const list = document.getElementById('p-list');
         list.innerHTML = '';
         const data = await request('/projects');
-        data.forEach(p => list.appendChild(row(p, ['title', 'description', 'owner_id'], 'deleteProject')));
+        data.forEach((p) => list.appendChild(renderItem('project', p, `${p.title} · owner #${p.owner_id} · ${p.description}`)));
       }
+
       async function createProject() {
         try {
           await request('/projects', {
             method: 'POST',
             body: JSON.stringify({
-              title: document.getElementById('p-title').value,
-              description: document.getElementById('p-desc').value,
+              title: document.getElementById('p-title').value.trim(),
+              description: document.getElementById('p-desc').value.trim(),
               owner_id: Number(document.getElementById('p-owner').value),
             }),
           });
-          document.getElementById('p-msg').textContent = 'Проект создан';
-          refreshProjects();
-        } catch (e) { document.getElementById('p-msg').textContent = e.message; }
-      }
-      async function deleteProject(id) {
-        await request(`/projects/${id}`, { method: 'DELETE' });
-        refreshProjects();
+          message('p-msg', 'Проект создан');
+          await refreshProjects();
+        } catch (e) {
+          message('p-msg', e.message, true);
+        }
       }
 
       async function refreshTasks() {
         const list = document.getElementById('t-list');
         list.innerHTML = '';
         const data = await request('/tasks');
-        data.forEach(t => list.appendChild(row(t, ['title', 'status', 'project_id'], 'deleteTask')));
+        data.forEach((t) => list.appendChild(renderItem('task', t, `${t.title} · ${t.status} · project #${t.project_id}`)));
       }
+
       async function createTask() {
         try {
           await request('/tasks', {
             method: 'POST',
             body: JSON.stringify({
-              title: document.getElementById('t-title').value,
+              title: document.getElementById('t-title').value.trim(),
               status: document.getElementById('t-status').value,
               project_id: Number(document.getElementById('t-project').value),
             }),
           });
-          document.getElementById('t-msg').textContent = 'Задача создана';
-          refreshTasks();
-        } catch (e) { document.getElementById('t-msg').textContent = e.message; }
-      }
-      async function deleteTask(id) {
-        await request(`/tasks/${id}`, { method: 'DELETE' });
-        refreshTasks();
+          message('t-msg', 'Задача создана');
+          await refreshTasks();
+        } catch (e) {
+          message('t-msg', e.message, true);
+        }
       }
 
-      Promise.all([refreshUsers(), refreshProjects(), refreshTasks()]);
+      async function refreshAll() {
+        await Promise.all([refreshUsers(), refreshProjects(), refreshTasks()]);
+      }
+
+      refreshAll();
     </script>
   </body>
 </html>

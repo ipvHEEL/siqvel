@@ -1,4 +1,5 @@
 from fastapi import HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from . import models, schemas
@@ -11,12 +12,20 @@ def _get_or_404(db: Session, model, item_id: int, entity_name: str):
     return instance
 
 
+def _commit_or_409(db: Session, duplicate_field: str = "Resource"):
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=f"{duplicate_field} already exists")
+
+
 # Users
 
 def create_user(db: Session, payload: schemas.UserCreate):
     user = models.User(**payload.model_dump())
     db.add(user)
-    db.commit()
+    _commit_or_409(db, "User with this email")
     db.refresh(user)
     return user
 
@@ -33,7 +42,7 @@ def update_user(db: Session, user_id: int, payload: schemas.UserUpdate):
     user = get_user(db, user_id)
     for k, v in payload.model_dump().items():
         setattr(user, k, v)
-    db.commit()
+    _commit_or_409(db, "User with this email")
     db.refresh(user)
     return user
 
